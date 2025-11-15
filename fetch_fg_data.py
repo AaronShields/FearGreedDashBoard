@@ -1,4 +1,3 @@
-# build_fg_history_base.py
 import pandas as pd
 from pathlib import Path
 
@@ -11,7 +10,6 @@ BASE_2011_2023 = (
 OUT = Path("data")
 HIST = OUT / "fg_history.csv"
 
-alpha_vantage_API = 'MCX5T9JI4BFJJ98H'
 
 def classify_rating(score: float) -> str: 
     if pd.isna(score):
@@ -42,7 +40,7 @@ def main():
     df = df[["date", "fg_score", "fg_rating"]].sort_values("date").reset_index(drop=True)
     df.to_csv(HIST, index=False)
 
-    print(f"✅ Saved history → {HIST} (rows={len(df)})")
+    print(f"Saved history → {HIST} (rows={len(df)})")
     print(df.head(3).to_string(index=False))
     print(df.tail(3).to_string(index=False))
 

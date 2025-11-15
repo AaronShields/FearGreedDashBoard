@@ -1,278 +1,213 @@
-# app.py — scaffold, not full app
 import streamlit as st
 import pandas as pd
-import altair as alt
-from pathlib import Path
+import plotly.express as px
+import plotly.graph_objects as go
 
-st.set_page_config(page_title="Fear & Greed Dashboard", layout="wide")
+st.set_page_config(page_title="Historical Fear & Greed Dashboard", layout="wide")
 
-DATA_DIR = Path("data")
-FG_FILE = DATA_DIR / "fg_history.csv"
-MERGED_FILE = DATA_DIR / "merged_fg_prices.csv"
-ANALYSIS_DIR = DATA_DIR / "analysis"
+st.markdown("""
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;900&family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        html, body, [class*="css"]  {
+            font-family: 'Poppins', 'Montserrat', sans-serif !important;
+        }
+        .main-title {
+            font-family: 'Montserrat', sans-serif !important;
+            font-size: 2.6rem !important;
+            letter-spacing: 0.01em;
+        }
+        .box-title {
+            font-family: 'Montserrat', sans-serif !important;
+            font-size: 2.0rem !important;
+            font-weight: 900 !important;
+            letter-spacing: 0.02em;
+        }
+        .box-value {
+            font-family: 'Poppins', sans-serif !important;
+            font-size: 2.2rem !important;
+            font-weight: 700 !important;
+        }
+        .box-sub {
+            font-size: 1.1rem !important;
+            opacity: 0.87;
+        }
+    </style>
+""", unsafe_allow_html=True)
 
-# --------- Load data (lightweight) ----------
-@st.cache_data
-def load_fg():
-    df = pd.read_csv(FG_FILE, parse_dates=["date"])
-    # ensure expected columns: date, fg_score, fg_rating (or bucket)
-    if "fg_bucket" not in df.columns:
-        # derive a bucket if not present
-        def bucket(s):
-            if s < 25: return "extreme fear"
-            if s < 45: return "fear"
-            if s < 55: return "neutral"
-            if s < 75: return "greed"
-            return "extreme greed"
-        df["fg_bucket"] = df["fg_score"].apply(bucket)
-    return df
 
-@st.cache_data
-def load_merged():
-    df = pd.read_csv(MERGED_FILE, parse_dates=["date"])
-    # expected cols: date, ticker, close, fg_score, fg_rating/fg_bucket, ret1, fwd1, fwd5
-    if "fg_bucket" not in df.columns:
-        def bucket(s):
-            if s < 25: return "extreme fear"
-            if s < 45: return "fear"
-            if s < 55: return "neutral"
-            if s < 75: return "greed"
-            return "extreme greed"
-        df["fg_bucket"] = df["fg_score"].apply(bucket)
-    return df
+# Loading merged dataset
+fg = pd.read_csv("data/merged_fg_prices.csv", parse_dates=["date"])
+bucket_stats = pd.read_csv("data/fg_bucket_stats.csv")
 
-fg = load_fg()
-merged = load_merged()
+# Latest FG
+fg_sorted = fg.sort_values("date")
+latest = fg_sorted.iloc[-1]
 
-# --------- Sidebar controls ----------
-st.sidebar.header("Filters")
-min_d, max_d = merged["date"].min(), merged["date"].max()
-date_range = st.sidebar.date_input("Date range", (min_d, max_d), min_value=min_d, max_value=max_d)
+current_date   = str(latest["date"].date())
+current_score  = int(latest["fg_score"])
+current_rating = latest["fg_bucket"]
 
-all_buckets = ["extreme fear", "fear", "neutral", "greed", "extreme greed"]
-bucket = st.sidebar.selectbox("Sentiment bucket (for bounce stats)", options=["All"] + all_buckets, index=0)
+RATING_COLOR = {
+    "extreme fear": "#B22222",
+    "fear": "#CC3333",
+    "neutral": "#808080",
+    "greed": "#2E8B57",
+    "extreme greed": "#006400"
+}
 
-tickers = sorted(merged["ticker"].unique().tolist())
-sel_tickers = st.sidebar.multiselect("Indexes", options=tickers, default=tickers)
-
-st.sidebar.markdown("---")
-dl_col1, dl_col2 = st.sidebar.columns(2)
-with dl_col1:
-    st.download_button("FG CSV", data=fg.to_csv(index=False), file_name="fg_history.csv", mime="text/csv")
-with dl_col2:
-    st.download_button("Merged CSV", data=merged.to_csv(index=False), file_name="merged_fg_prices.csv", mime="text/csv")
-
-# --------- Filtered frames ----------
-mask_date = (fg["date"].between(pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])))
-fg_filt = fg.loc[mask_date].copy()
-
-m = merged.copy()
-m = m[m["date"].between(pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1]))]
-if sel_tickers:
-    m = m[m["ticker"].isin(sel_tickers)]
-if bucket != "All":
-    m = m[m["fg_bucket"] == bucket]
-
-# --------- Top row: FG score line (CNN-like) ----------
-st.markdown("### Fear & Greed Index (daily)")
-
-if fg_filt.empty:
-    st.info("No data in the selected date range.")
-else:
-    x0 = pd.to_datetime(fg_filt["date"].min())
-    x1 = pd.to_datetime(fg_filt["date"].max())
-    x_domain = [x0, x1]
-
-    band_df = pd.DataFrame({
-        "bucket": ["extreme fear","fear","neutral","greed","extreme greed"],
-        "y0": [0,25,45,55,75],
-        "y1": [25,45,55,75,100],
-        "x0": [x0]*5,
-        "x1": [x1]*5,
-    })
-
-    bands = (
-        alt.Chart(band_df)
-          .mark_rect(opacity=0.08)
-          .encode(
-              x="x0:T", x2="x1:T",
-              y="y0:Q", y2="y1:Q",
-              color=alt.Color(
-                  "bucket:N",
-                  scale=alt.Scale(range=["#d73027","#fc8d59","#fee08b","#91bfdb","#4575b4"]),
-                  legend=None
-              ),
-          )
-    )
-
-    fg_line = (
-        alt.Chart(fg_filt)
-          .mark_line()
-          .encode(
-              x=alt.X("date:T", title="Date", scale=alt.Scale(domain=x_domain)),
-              y=alt.Y("fg_score:Q", title="Fear & Greed Score (0–100)"),
-              tooltip=["date:T", alt.Tooltip("fg_score:Q", format=".1f"), "fg_bucket:N"]
-          )
-          .properties(height=260)
-    )
-
-    st.altair_chart(bands + fg_line, use_container_width=True)
-
-# --------- Bucket averages (below the chart) ----------
-st.markdown("### Average returns by Fear & Greed bucket")
-
-# pick the frame driving stats (same filtered 'm' you built earlier)
-bucket_order = ["extreme fear", "fear", "neutral", "greed", "extreme greed"]
-
-def summarize_by_bucket(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return pd.DataFrame(columns=["fg_bucket","ticker","avg_fwd1","hit_fwd1","avg_fwd5","hit_fwd5","count"])
-    g = df.groupby(["fg_bucket","ticker"])
-    out = (
-        g.agg(
-            avg_fwd1=("fwd1","mean"),
-            med_fwd1=("fwd1","median"),
-            hit_fwd1=("fwd1", lambda s: (s > 0).mean()),
-            avg_fwd5=("fwd5","mean"),
-            med_fwd5=("fwd5","median"),
-            hit_fwd5=("fwd5", lambda s: (s > 0).mean()),
-            count=("fwd1","count"),
-        )
-        .reset_index()
-    )
-    # order buckets nicely
-    out["fg_bucket"] = pd.Categorical(out["fg_bucket"], categories=bucket_order, ordered=True)
-    out = out.sort_values(["fg_bucket","ticker"]).reset_index(drop=True)
-    return out
-
-by_bucket = summarize_by_bucket(m.dropna(subset=["fwd1","fwd5"]))
-
-# pretty table
-st.dataframe(
-    by_bucket[["fg_bucket","ticker","avg_fwd1","hit_fwd1","avg_fwd5","hit_fwd5","count"]]
-      .rename(columns={
-          "fg_bucket":"bucket",
-          "avg_fwd1":"avg fwd1",
-          "hit_fwd1":"hit fwd1",
-          "avg_fwd5":"avg fwd5",
-          "hit_fwd5":"hit fwd5"
-      })
-      .style.format({
-          "avg fwd1":"{:.4%}",
-          "hit fwd1":"{:.1%}",
-          "avg fwd5":"{:.4%}",
-          "hit fwd5":"{:.1%}"
-      }),
-    use_container_width=True
-)
-
-# optional: overall (all tickers combined) table
-with st.expander("Show overall (all tickers combined)"):
-    overall = (
-        m.dropna(subset=["fwd1","fwd5"])
-         .groupby("fg_bucket")
-         .agg(
-             avg_fwd1=("fwd1","mean"),
-             med_fwd1=("fwd1","median"),
-             hit_fwd1=("fwd1", lambda s: (s > 0).mean()),
-             avg_fwd5=("fwd5","mean"),
-             med_fwd5=("fwd5","median"),
-             hit_fwd5=("fwd5", lambda s: (s > 0).mean()),
-             count=("fwd1","count"),
-         )
-         .reset_index()
-    )
-    overall["fg_bucket"] = pd.Categorical(overall["fg_bucket"], categories=bucket_order, ordered=True)
-    overall = overall.sort_values("fg_bucket")
-    st.dataframe(
-        overall.rename(columns={"fg_bucket":"bucket"})
-               .style.format({
-                   "avg_fwd1":"{:.4%}", "hit_fwd1":"{:.1%}",
-                   "avg_fwd5":"{:.4%}", "hit_fwd5":"{:.1%}"
-               }),
-        use_container_width=True
-    )
-
-# download button
-st.download_button(
-    "Download bucket averages (CSV)",
-    data=by_bucket.to_csv(index=False),
-    file_name="bucket_averages_by_ticker.csv",
-    mime="text/csv"
-)
-
-# --------- KPIs: average bounce per index ----------
-st.markdown("### Average Forward Bounce by Index")
-def kpi_table(df):
-    if df.empty:
-        return pd.DataFrame(columns=["ticker","avg_fwd1","hit_fwd1","avg_fwd5","hit_fwd5","count"])
-    g = df.groupby("ticker")
-    out = pd.DataFrame({
-        "avg_fwd1": g["fwd1"].mean(),
-        "hit_fwd1": g["fwd1"].apply(lambda s: (s > 0).mean()),
-        "avg_fwd5": g["fwd5"].mean(),
-        "hit_fwd5": g["fwd5"].apply(lambda s: (s > 0).mean()),
-        "count": g["fwd1"].count()
-    }).reset_index()
-    return out
-
-kpis = kpi_table(m.dropna(subset=["fwd1"]))
-st.dataframe(kpis.style.format({
-    "avg_fwd1": "{:.4%}", "hit_fwd1": "{:.1%}",
-    "avg_fwd5": "{:.4%}", "hit_fwd5": "{:.1%}"
-}), use_container_width=True)
-
-# --------- Bars: avg fwd1/fwd5 by index (filtered bucket) ----------
-col1, col2 = st.columns(2)
-with col1:
-    st.caption("Average 1-Day Forward Return")
-    chart1 = (
-        alt.Chart(kpis)
-          .mark_bar()
-          .encode(x=alt.X("ticker:N", title="Index"),
-                  y=alt.Y("avg_fwd1:Q", title="Avg fwd1"),
-                  tooltip=["ticker","avg_fwd1","hit_fwd1","count"])
-          .properties(height=260)
-    )
-    st.altair_chart(chart1, use_container_width=True)
-
-with col2:
-    st.caption("Average 5-Day Forward Return")
-    chart2 = (
-        alt.Chart(kpis)
-          .mark_bar()
-          .encode(x=alt.X("ticker:N", title="Index"),
-                  y=alt.Y("avg_fwd5:Q", title="Avg fwd5"),
-                  tooltip=["ticker","avg_fwd5","hit_fwd5","count"])
-          .properties(height=260)
-    )
-    st.altair_chart(chart2, use_container_width=True)
-
-# --------- Optional: distribution viewer ----------
-with st.expander("Return distribution (histogram)"):
-    ret_window = st.radio("Forward window", ["fwd1","fwd5"], horizontal=True)
-    if not m.empty:
-        hist = (
-            alt.Chart(m.dropna(subset=[ret_window]))
-              .mark_bar()
-              .encode(
-                  x=alt.X(f"{ret_window}:Q", bin=alt.Bin(maxbins=50), title=f"{ret_window} return"),
-                  y=alt.Y("count()", title="Count"),
-                  color="ticker:N",
-                  tooltip=[ret_window, "ticker", "count()"]
-              )
-              .properties(height=260)
-        )
-        st.altair_chart(hist, use_container_width=True)
+# Compute streak
+days_in_streak = 1
+for i in range(len(fg_sorted)-2, -1, -1):
+    if fg_sorted.iloc[i]["fg_bucket"] == current_rating:
+        days_in_streak += 1
     else:
-        st.info("No rows after filters.")
+        break
 
-# --------- Footers / notes ----------
-st.markdown(
-    """
-    **Notes**
-    - *Bucket filter* above drives the bounce stats and charts.  
-    - *Date range* filters both the FG line and bounce stats.  
-    - Downloads available in the sidebar.
-    """
+# Total days
+total_days_for_bucket = int(
+    bucket_stats.loc[bucket_stats["fg_bucket"] == current_rating, "count"].iloc[0]
 )
+
+# Header
+st.title("Historical Fear & Greed Dashboard")
+st.subheader("Daily Updates for Market Sentiment, Returns, and Historical Behavior")
+
+
+# Columns
+col1, col2, col3 = st.columns(3)
+
+# Streak (Box 2)
+with col1:
+    st.markdown(
+        f"""
+    <div style="background-color:{RATING_COLOR[current_rating]};padding:40px;border-radius:22px;color:white;text-align:center;height:250px;display:flex;flex-direction:column;justify-content:center;">
+        <div class="box-title">STREAK</div>
+        <div class="box-value">{days_in_streak} days</div>
+    </div>
+    """, unsafe_allow_html=True
+    )
+
+
+# Current Market Sentiment
+with col2:
+    st.markdown(
+        f"""
+        <div style="background-color:{RATING_COLOR[current_rating]};padding:40px;border-radius:22px;color:white;text-align:center; height: 250px; display: flex; flex-direction: column; justify-content: center;">
+            <div class="box-title">CURRENT SENTIMENT</div>
+            <div class="box-value">{current_rating.upper()}</div>
+            <div class="box-sub">{current_date} — Score: {current_score}</div>
+        </div>
+        """, unsafe_allow_html=True
+)
+
+# Total Days (Box 3)
+with col3:
+    st.markdown(
+        f"""
+    <div style="background-color:{RATING_COLOR[current_rating]};padding:40px;border-radius:22px;color:white;text-align:center;height:250px;display:flex;flex-direction:column;justify-content:center;">
+        <div class="box-title">TOTAL DAYS</div>
+        <div class="box-value">{total_days_for_bucket}</div>
+        <div class="box-sub">(Historical)</div>
+    </div>
+    """, unsafe_allow_html=True
+    )
+
+
+cols = st.columns(2)
+with cols[0]:
+    selected_ticker = st.selectbox("Ticker", sorted(fg['ticker'].unique()), index=0)
+with cols[1]:
+    year_options = ["All"] + [str(y) for y in sorted(fg['date'].dt.year.unique())]
+    selected_year = st.selectbox("Year", year_options, index=0)
+
+data = fg[fg['ticker'] == selected_ticker]
+if selected_year != "All":
+    data = data[data['date'].dt.year == int(selected_year)]
+
+min_date = data['date'].min().to_pydatetime()
+max_date = data['date'].max().to_pydatetime()
+date_range = st.slider(
+    "Zoom to Date Range",
+    min_value=min_date,
+    max_value=max_date,
+    value=(min_date, max_date)
+)
+data = data[(data['date'] >= pd.to_datetime(date_range[0])) & (data['date'] <= pd.to_datetime(date_range[1]))]
+
+bucket_colors = {
+    "extreme fear": "#8B0000",
+    "fear": "#CC3333",
+    "neutral": "#808080",
+    "greed": "#2E8B57",
+    "extreme greed": "#006400"
+}
+
+
+fig = go.Figure()
+
+fig.add_trace(
+    go.Scatter(
+        x=data['date'],
+        y=data['close'],
+        name=f"{selected_ticker} Price",
+        yaxis="y1",
+        mode="lines",
+        line=dict(color="white", width=2, dash="solid"),
+        opacity=0.6
+    )
+)
+
+fig.add_trace(
+    go.Scatter(
+        x=data['date'],
+        y=data['fg_score'],
+        mode="lines",             
+        name="Fear & Greed Score",
+        line=dict(color="#CCCCCC", width=1.5),  
+        opacity=0.25,                
+        yaxis="y2"
+    )
+)
+
+
+fig.update_layout(
+    template="plotly_dark",
+    yaxis=dict(title="Price (USD)", side="left"),
+    yaxis2=dict(
+        title="Fear & Greed Score",
+        overlaying="y",
+        side="right",
+        range=[0, 100]
+    ),
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+# market bucket stats
+market_bucket_stats = pd.read_csv("data/fg_market_bucket_stats.csv")
+
+return_window = st.radio(
+    f"Select Forward Return Window For Current Sentiment: {current_rating.title()}",
+    ['avg_fwd1', 'avg_fwd5', 'avg_fwd20'],
+    horizontal=True
+)
+
+# Display Boxes
+cols = st.columns(3)
+for i, ticker in enumerate(["DIA", "SPY", "QQQ"]):
+    sub = market_bucket_stats[market_bucket_stats['ticker'] == ticker]
+    if not sub.empty:
+        avg_return = sub[return_window].values[0] * 100  # to percentage
+        label = return_window.split('_')[1]  # 'fwd1', 'fwd5', or 'fwd20' → '1', '5', '20'
+        with cols[i]:
+            st.markdown(f"""
+                <div style="background-color:#222; border-radius:16px; padding:30px; text-align:center;">
+                    <div style="font-size:20px; font-weight:bold;">{ticker}</div>
+                    <div style="font-size:28px; color:#50fa7b; font-weight:700;">{avg_return:.2f}%</div>
+                    <div style="font-size:14px; opacity:0.7;">Forward Return {label} day{'s' if label != '1' else ''}</div>
+                </div>
+            """, unsafe_allow_html=True)
+    else:
+        with cols[i]:
+            st.write(f"No data for {ticker}")

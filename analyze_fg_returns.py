@@ -8,15 +8,13 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 def main():
     df = pd.read_csv(MERGED, parse_dates=["date"])
-    df = df.dropna(subset=["fwd1", "fg_score"])  # rows where we can measure returns
+    df = df.dropna(subset=["fwd1", "fg_score"])  
 
-    # ----------------------------
-    # 📌 PART 1: Correlations
-    # ----------------------------
+    # Correlations
     pearson_fwd1 = df["fg_score"].corr(df["fwd1"])
     pearson_fwd5 = df["fg_score"].corr(df["fwd5"])
     
-    # Spearman (requires scipy)
+    # Spearman
     try:
         spearman_fwd1 = df["fg_score"].corr(df["fwd1"], method="spearman")
         spearman_fwd5 = df["fg_score"].corr(df["fwd5"], method="spearman")
@@ -31,11 +29,9 @@ def main():
     ])
     corr_fp = OUT_DIR / "correlation_summary.csv"
     corr_df.to_csv(corr_fp, index=False)
-    print(f"✅ Saved correlations → {corr_fp}")
+    print(f" Saved correlations → {corr_fp}")
 
-    # ----------------------------
-    # 📌 PART 2: Bucket summary (1-day)
-    # ----------------------------
+    # Bucket summary (1-day)
     summary1 = (
         df
         .groupby(["fg_bucket", "ticker"])
@@ -51,11 +47,9 @@ def main():
     )
     fwd1_fp = OUT_DIR / "bucket_performance_fwd1.csv"
     summary1.to_csv(fwd1_fp, index=False)
-    print(f"✅ Saved 1-day bucket summary → {fwd1_fp}")
+    print(f"1-day bucket summary → {fwd1_fp}")
 
-    # ----------------------------
-    # 📌 PART 3: Best index per bucket (1-day)
-    # ----------------------------
+    # Best by Bucket Summary
     best_by_bucket = (
         summary1
         .groupby("fg_bucket")
@@ -64,11 +58,9 @@ def main():
     )
     best_fp = OUT_DIR / "best_per_bucket.csv"
     best_by_bucket.to_csv(best_fp, index=False)
-    print(f"✅ Saved best index per bucket → {best_fp}")
+    print(f"Saved best index per bucket → {best_fp}")
 
-    # ----------------------------
-    # 📌 PART 4: 5-day summary
-    # ----------------------------
+    # 5-day summary
     df5 = df.dropna(subset=["fwd5"])
     summary5 = (
         df5
@@ -85,9 +77,9 @@ def main():
     )
     fwd5_fp = OUT_DIR / "bucket_performance_fwd5.csv"
     summary5.to_csv(fwd5_fp, index=False)
-    print(f"✅ Saved 5-day bucket summary → {fwd5_fp}")
+    print(f" Saved 5-day bucket summary → {fwd5_fp}")
 
-    # Done
+    # Script Finish
     print("\n--- OUTPUT COMPLETE ---")
     print(f"Correlations:           {corr_fp}")
     print(f"1-day bucket summary:   {fwd1_fp}")
